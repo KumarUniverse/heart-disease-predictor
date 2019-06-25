@@ -1,0 +1,540 @@
+---
+title: "Heart Disease Project"
+author: "Akash Kumar"
+date: "June 17, 2019"
+output: pdf_document
+toc: true
+toc_depth: 2
+fig_width: 5
+fig_height: 3
+fontsize: 10pt
+geometry: margin=0.5in
+urlcolor: blue
+---
+
+```{r setup, message=FALSE, include=FALSE}
+knitr::opts_chunk$set(message = FALSE,
+                      warning = FALSE,
+                      fig.align = 'center')
+```
+
+# Introduction
+## Background
+Everyday, more and more people are at risk of getting heart disease.
+So, it is of great importance for doctors to be able to predict
+who will get heart disease so that appropriate measures can be
+taken before the condition becomes serious.
+
+## Inspiration
+Many people have always wondered how doctors are able to predict
+certain diseases in patients using data about the patient's health.
+Through this project, we would like to gain some insight on how
+exactly that process works.
+
+## Focus
+The focus of this project is to predict heart disease in patients
+with as high of an accuracy as possible.
+
+## Dataset
+For this assignment, we will be using the cleaned version of the
+[Cleveland database](https://www.kaggle.com/ronitf/heart-disease-uci) 
+from the Kaggle website.
+
+## Goal
+The goal of the project is to develop and train models to predict 
+heart disease in patients with as high of an accuracy as possible. 
+The accuracy of the predictions must be optimized such that the
+**accuracy >= 0.7**.  
+For this project, we will be building these models using R (version 3.6.0).
+
+## Setup and Cleaning
+The following code is used to create the heart set, which is split
+into the train set and test set. Due to the small size of the
+dataset, we have opted not to create a validation set.
+```{r setup-data}
+# Install packages:
+if(!require(tidyverse)) 
+  install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) 
+  install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(pROC)) 
+  install.packages("pROC", repos = "http://cran.us.r-project.org")
+if(!require(randomForest)) 
+  install.packages("randomForest", repos = "http://cran.us.r-project.org")
+if(!require(klaR)) 
+  install.packages("klaR", repos = "http://cran.us.r-project.org")
+if(!require(kernlab)) 
+  install.packages("kernlab", repos = "http://cran.us.r-project.org")
+
+# Load the necessary libraries:
+library(tidyverse)
+library(caret)
+library(pROC)
+library(randomForest)
+library(klaR)
+library(kernlab)
+
+# Heart Disease UCI dataset:
+# https://www.kaggle.com/ronitf/heart-disease-uci
+# https://archive.ics.uci.edu/ml/datasets/Heart+Disease
+
+# heart set:
+heart <- read.csv("heart.csv")
+colnames(heart)[c(1,3,4,6,7,8,9,10,11,12)] <- c("age", "chest_pain", "resting_bps",
+                              "blood_sugar_120", "resting_ecg",
+                              "max_bpm", "angina", "st_oldpeak", "st_slope",
+                              "vessel_count")
+heart <- heart[, c(1,2,4,8,5,6,7,3,9,10,11,12,13,14)] # Reorder some columns.
+heart <- na.omit(heart) # Remove NAs.
+head(heart)
+glimpse(heart)
+summary(heart)
+dim(heart) # 303 rows, 14 columns.
+
+# train set will be 90% of heart set
+# test set will be 10% of heart set
+set.seed(1, sample.kind = "Rounding")
+test_index <- createDataPartition(y = heart$age, times = 1, p = 0.1, list = FALSE)
+train <- heart[-test_index,]
+test <- heart[test_index,]
+```
+
+# Methods and Analysis
+## Exploratory Data Analysis (EDA)
+Now, let us start our EDA on the Cleveland dataset.
+```{r eda}
+train <- train %>% arrange(age) # Arrange rows according to age.
+# Take a glimpse at the train set.
+head(train)
+glimpse(train)
+summary(train)
+dim(train) # 271 rows, 14 columns.
+
+# Total population:
+patient_pop <- train %>% nrow()
+patient_pop # 271 patients
+# Total number of men and women: 1 = male, 0 = female
+men <- sum(train$sex)
+men   # 187 men
+women <- patient_pop - men
+women # 84 women
+# Number of patients with heart disease:
+heart_disease <- sum(train$target)
+heart_disease # 146 heart disease patients
+# Number of patients without heart disease:
+healthy <- patient_pop - heart_disease
+healthy       # 125 healthy patients
+# Number of men and women with heart disease:
+hd_men <- train %>% filter(sex == 1 & target == 1) %>% nrow()
+hd_men   # 85 hd men
+hd_women <- train %>% filter(sex == 0 & target == 1) %>% nrow()
+hd_women # 61 hd women
+# Proportion of men and women with heart disease:
+hd_men_prop <- hd_men / men
+hd_men_prop   # 45.45%
+hd_women_prop <- hd_women / women
+hd_women_prop # 72.62%
+# Age:
+mean_age <- mean(train$age)
+mean_age     # 54 years old
+# Mode function:
+getmode <- function(x) {
+  uniqv <- unique(x)
+  uniqv[which.max(tabulate(match(x, uniqv)))]
+}
+mode_age <- getmode(train$age)
+mode_age     # Most patients are 58 years old
+# Youngest age:
+youngest_age <- min(train$age)
+youngest_age # 29 years old
+# Oldest age:
+oldest_age <- max(train$age)
+oldest_age   # 77 years old
+```
+
+### Here is a brief summary of the train dataset:
+The train dataset contains 271 entries (out of the
+303 entries in the heart dataset) and 14 variables.
+
+* *age*: age of the patient.  
+* *sex*: gender of the patient (0 = female, 1 = male).  
+* *resting_bps*: resting blood pressure (in mm Hg).  
+* *max_bpm*: max heart rate achieved.  
+* *chol*: serum cholestoral in mg/dl.  
+* *blood_sugar_120*: resting blood sugar (0 = false, 1 = true).    
+* *resting_ecg*: resting electrocardiographic results.  
+* *chest_pain*: chest pain type (0-3).  
+* *angina*: exercise induced angina (0 = no, 1 = yes).  
+* *st_oldpeak*: ST depression induced by exercise relative to rest.  
+* *st_slope*: the slope of the peak exercise ST segment.  
+* *vessel_count*: number of major vessels (0-3) colored by flourosopy.  
+* *thal*: 3 = normal; 6 = fixed defect; 7 = reversable defect.
+* *target*: presence of heart disease (0 = no, 1 = yes).
+
+Of the 271 patients in the train set, 146 have heart disease
+and 125 are healthy. Since there are more patients with heart
+disease than healthy patients there might be a tendency for our
+models to predict false positives. If patients get falsely
+marked with heart disease, they may receive unnecessary
+treatment, resulting in the loss of money, medical supplies,
+and more importantly, the patient's health. So we must be careful
+to ensure that specificity is high in our models. Also note that
+there are more men (187) than women (84). This means that our
+models run the risk of being more biased towards men than
+women. The proportion of men with heart disease is 45.45%
+whereas the proportion of women with heart disease is 72.62%.
+This suggests that women are at greater risk of developing
+heart disease than men. The youngest age in the set is 29
+and the oldest age in the set is 77, with the mean age being 54. 
+So patients outside of this age range may receive inaccurate diagnosis.
+
+## Plots and Visualizations
+Before going forward, we need to consider some factors that might
+influence the onset of heart disease.
+Here are 6 such potential factors:
+
+1. Age  
+2. Sex  
+3. Max BPM  
+4. Cholesterol  
+5. Blood sugar  
+6. Number of major vessels  
+
+The following plots and visualizations will serve to highlight
+the 6 above mentioned factors and further aid in our EDA.
+
+### 1. Age
+First, we want to visualize the age Distribution using a histogram.
+```{r age-dist, echo=FALSE}
+train %>%
+  group_by(age) %>%
+  summarize(count = n()) %>%
+  ggplot(aes(x = age, y = count)) +
+  geom_line(color = "orange") +
+  ggtitle("Patient Age Distribution")
+```
+From this histogram, we can see that the ages are normally
+distributed with a peak at age 58 (mode). However, we want
+to know which ages are at greater risk of heart disease.
+
+```{r heart-disease-age-dist, echo=FALSE}
+train %>%
+  filter(target == 1) %>%
+  group_by(age) %>%
+  summarize(count = n()) %>%
+  ggplot(aes(x = age, y = count)) +
+  geom_line(color = "red") +
+  ggtitle("Heart Disease Age Distribution")
+```
+Heart disease seems to affect people of all ages and
+one can even argue that risk of heart disease increases
+with age. The reason there are few people over age 65
+with heart disease is that old people do not represent
+the majority of the population. If we were to graph the
+proportions of a certain age with heart disease, we would
+find that the disease proportion will increase as age
+increases. After all, older people are weaker, fragile, and
+more susceptible to disease.
+
+### 2. Sex
+Women are at greater risk of developing heart disease
+than men. At the same time, they also tend to live longer,
+and this might play a factor as old people are more likely
+of developing heart disease, as we mentioned earlier.
+```{r sex-disease-prop, echo=FALSE}
+train %>%
+  mutate(gender = ifelse(sex == 0, "female", "male")) %>%
+  group_by(gender) %>%
+  summarize(count = n(), 
+            prop = sum(target)/count*100) %>%
+  ggplot(aes(x = gender, y = prop)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  labs(x = "gender", y = "proportion with heart disease (in %)") +
+  ggtitle("Heart Disease Proportions by Gender")
+```
+
+### 3. Max BPM
+The higher the patient's max heart rate, the greater their
+chance of developing heart disease.
+```{r max-bpm, echo=FALSE}
+train %>%
+  filter(target == 1) %>%
+  ggplot(aes(max_bpm)) +
+  geom_histogram(bins = 10, fill = "purple", color = "black") +
+  labs(x = "max BPM", y = "heart disease count") +
+  ggtitle("Max BPM vs Heart Disease")
+```
+
+### 4. Cholesterol
+Patients with high cholesterol are at great risk of
+developing heart disease. However, it is hard to find
+patients with extremely high cholesterol (over 400 mg/dl),
+so their numbers are less.
+```{r cholesterol-heart-disease-dist, echo=FALSE}
+train %>%
+  filter(target == 1) %>%
+  ggplot(aes(chol)) +
+  geom_histogram(bins = 10, fill = "red", color = "black") +
+  labs(x = "cholesterol", y = "heart disease count") +
+  ggtitle("Cholesterol vs Heart Disease")
+```
+Patients with cholesterol levels between 150 and 350 mg/dl
+are found to be the majority with heart disease.
+
+### 5. Blood Sugar
+A fasting blood sugar over 120 mg/dl is usually considered
+as an indication of diabetes. However, there does not seem
+to be much correlation between the level of blood sugar
+and heart disease. Other factors like age and sex serve
+as better predictors.
+```{r blood-sugar-disease-prop, echo=FALSE}
+train %>%
+  mutate(sugar = ifelse(blood_sugar_120 == 0, "no", "yes")) %>%
+  group_by(sugar) %>%
+  summarize(count = n(),
+            prop = sum(target)/count*100) %>%
+  ggplot(aes(x = sugar, y = prop)) +
+  geom_bar(stat = "identity", fill = "brown") +
+  labs(x = "is blood sugar greater than 120?", 
+       y = "proportion with heart disease (in %)") +
+  ggtitle("Blood Sugar and Heart Disease")
+```
+
+### 6. Number of major vessels
+We want to see which vessel count represents the majority. To
+do this, we will use a vessel count frequency distribution.
+There can be anywhere between 0 to 4 major blood vessels colored
+by flourosopy.
+```{r vessel-freq, echo=FALSE}
+train %>%
+  group_by(vessel_count) %>%
+  summarize(count = n()) %>%
+  ggplot(aes(x = vessel_count, y = count)) +
+  geom_bar(stat = "identity", fill = "black") +
+  labs(x = "number of vessels", 
+       y = "frequency") +
+  ggtitle("Vessel Count Frequency")
+```
+The majority of patients have 0 major vessels colored by flourosopy.
+
+```{r vessel-heart-disease, echo=FALSE}
+train %>%
+  filter(target == 1) %>%
+  group_by(vessel_count) %>%
+  summarize(count = n()) %>%
+  ggplot(aes(x = vessel_count, y = count)) +
+  geom_bar(stat = "identity", fill = "gold") +
+  labs(x = "number of vessels", 
+       y = "heart disease count") +
+  ggtitle("Vessel Count and Heart Disease")
+```
+Looking at the vessel count for heart disease patients,
+we see that as the patients contain more healthy major
+vessels, the lesser their risk of getting heart disease.
+At the same time, the frequency of each of the vessel
+counts seem to have decreased in the same proportions.
+That is why this frequency bar plot seems very similar
+in shape to the previous one. Nonetheless, a correlation
+does seem to exist.
+
+## Modelling and Training
+### Models
+For this project, 4 prediction models have been built:
+
+* Model 1: Naive Bayes  
+* Model 2: Logistic Regression  
+* Model 3: Support Vector Machine (SVM)  
+* Model 4: Random Forest  
+
+These models will be trained on the train dataset and then
+tested on the test dataset. Please note that no validation
+set was created as the original heart dataset is small
+in size.
+
+### Setup for Modelling
+Before we start building our models, we need to do a
+few things:
+```{r model-setup}
+AUC = list()      # List of AUCs
+accuracy = list() # List of model accuracies
+# Change some columns in train and test sets to factor:
+fac_col <- c(2,3,6,7,9,11,12,13,14)
+for(i in fac_col) {  
+  train[,i] = as.factor(train[,i])
+}
+for(i in fac_col) {  
+  test[,i] = as.factor(test[,i])
+}
+# Remove any troublesome columns: (zero variances between variables)
+train[[3]] <- NULL
+test[[3]] <- NULL
+# Set target level:
+levels(train$target) <- make.names(levels(factor(train$target)))
+levels(test$target) <- make.names(levels(factor(train$target)))
+# Train control:
+train_control <- trainControl(method = "repeatedcv",
+                              number = 10,
+                              repeats = 10,
+                              classProbs = TRUE, # Estimate class probabilities.
+                              summaryFunction = twoClassSummary)
+```
+
+### Model 1: Naive Bayes
+```{r model-1, warning = FALSE}
+set.seed(1, sample.kind = "Rounding")
+naive_bayes <- train(target ~ ., data = train, 
+                     method = "nb", family = "binomial") 
+nb_prediction <- predict(naive_bayes, test)
+nb_prediction_prob <- predict(naive_bayes, test, type = "prob")[2]
+# Confusion matrix:
+nb_conf_mat <- confusionMatrix(nb_prediction, as.factor(test[,"target"]))
+nb_conf_mat
+#ROC curve:
+AUC$naive_bayes <- roc(as.numeric(test$target),
+                   as.numeric(as.matrix((nb_prediction_prob))))$auc
+AUC
+# Accuracy:
+accuracy$naive_bayes <- nb_conf_mat$overall["Accuracy"]
+accuracy
+```
+The accuracy for the naive bayes model is **0.65625**.  
+The sensitivity is **0.23077**.  
+The specificity is **0.94737**.  
+The accuracy is below our set goal of **0.7** and the
+sensitivity is too low for practical purposes. The
+specificity, however, is very good and this will help
+to greatly avoid predicting false positives.
+
+### Model 2: Logistic Regression
+```{r model-2, warning = FALSE}
+set.seed(1, sample.kind = "Rounding")
+log_reg <- train(target ~ ., data = train,
+                 method = "glm", family = "binomial") 
+log_reg_prediction <- predict(log_reg, test)
+log_reg_prediction_prob <- predict(log_reg, test, type = "prob")[2]
+# Confusion matrix:
+log_reg_conf_mat <- confusionMatrix(log_reg_prediction, as.factor(test[,"target"]))
+log_reg_conf_mat
+#ROC curve:
+AUC$log_reg <- roc(as.numeric(test$target),
+                  as.numeric(as.matrix((log_reg_prediction_prob))))$auc
+AUC
+# Accuracy:
+accuracy$log_reg <- log_reg_conf_mat$overall["Accuracy"]
+accuracy
+```
+The accuracy for the logistic regression model is **0.625**.  
+The sensitivity is **0.4615**.  
+The specificity is **0.7368**.  
+The accuracy is below our set goal of **0.7** and even though the
+sensitivity is better than that of model 1, it is still too 
+low for practical purposes. By increasing the sensitivity,
+we have to pay the price of decreased specificity.
+
+### Model 3: Support Vector Machine (SVM)
+```{r model-3, warning = FALSE}
+set.seed(1, sample.kind = "Rounding")
+svm <- train(target ~ ., data = train,
+             method = "svmLinear",
+             preProcess = c("center", "scale"),
+             trControl = train_control,
+             family = "binomial",
+             tuneLength = 8,
+             metric = "ROC")
+svm_prediction <- predict(svm, test)
+svm_prediction_prob <- predict(svm, test, type="prob")[2]
+# Confusion matrix:
+svm_conf_mat <- confusionMatrix(svm_prediction, test[,"target"])
+svm_conf_mat
+#ROC curve:
+AUC$svm <- roc(as.numeric(test$target),
+               as.numeric(as.matrix((svm_prediction_prob))))$auc
+AUC
+# Accuracy:
+accuracy$svm <- svm_conf_mat$overall["Accuracy"]
+accuracy
+```
+The accuracy for the SVM model is **0.6875**.  
+The sensitivity is **0.5385**.  
+The specificity is **0.7895**.  
+The accuracy is very close to our set goal of **0.7** but
+not quite there yet. This time, both the sensitivity and
+specificity have increased from the previous model, 
+thus increasing true positives and decreasing
+false positives.
+
+### Model 4: Random Forest
+```{r model-4, warning = FALSE}
+set.seed(1, sample.kind = "Rounding")
+rf <- train(target ~ ., data = train,
+            method = "rf",
+            ntree = 500,
+            preProcess = c("center", "scale"),
+            trControl = train_control,
+            family = "binomial",
+            tuneLength = 8,
+            metric = "ROC")
+# Alternative method:
+#rf <- randomForest(target ~ .,data = train, ntree = 500)
+rf_prediction <- predict(rf, test)
+rf_prediction_prob = predict(rf, test, type="prob")[2]
+# Confusion matrix:
+rf_conf_mat <- confusionMatrix(rf_prediction, test[,"target"])
+rf_conf_mat
+#ROC curve:
+AUC$rf <- roc(as.numeric(test$target),
+              as.numeric(as.matrix((rf_prediction_prob))))$auc
+AUC
+# Accuracy:
+accuracy$rf <- rf_conf_mat$overall["Accuracy"]
+accuracy
+```
+The accuracy for the random forest model is **0.7188**.  
+The sensitivity is **0.5385**.  
+The specificity is **0.8421**.  
+This time, the accuracy has passed our set goal of **0.7**.
+Also, we were able to increase the specificity with
+causing any decrease in sensitivity.
+
+# Results
+**Model 1 Accuracy:**
+```{r rmse-1, echo=FALSE}
+accuracy$naive_bayes
+```
+**Model 2 Accuracy:**
+```{r rmse-2, echo=FALSE}
+accuracy$log_reg
+```
+**Model 3 Accuracy:**
+```{r rmse-3, echo=FALSE}
+accuracy$svm
+```
+**Model 4 Accuracy:**
+```{r rmse-4, echo=FALSE}
+accuracy$rf
+```
+Out of the 4 prediction models we have built for this
+project, Model 4, which implemented a random forest, managed
+to achieve an accuracy greater than the target accuracy of **0.7**.
+The accuracy achieved by that model is **0.71875**.
+Therefore, our goal has been achieved.
+
+# Conclusion
+For this project, we built and used 4 machine learning models to
+predict heart disease in patients. We started off with a relatively 
+simple naive bayes model, then a logistic regression model, then built
+an SVM model, and finally achieved an accuracy greater than **0.7**
+with our random forest model. The best of the models is the
+random forest model and the worst is the logistic regression
+model.
+
+Based on what we have observed, it can be concluded that
+certain factors like *age* and *sex* alone have enough 
+predictive power to determine the onset of heart disease
+in patients with a reasonable degree of accuracy.
+
+In the future, we could try implementing more models like FLD, 
+boosted trees, least squares, AdaBoost, ensemble, etc. The goal
+would be to create models which address some of the shortcomings
+of our current models and hopefully achieve an accuracy greater
+than or equal to **0.85**.
