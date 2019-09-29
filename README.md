@@ -1,5 +1,5 @@
 # Heart-Disease-Predictor
-This project uses R and the Cleveland database to predict heart disease in patients.
+This project uses R and the [Cleveland database](https://www.kaggle.com/ronitf/heart-disease-uci) to predict heart disease in patients.
 
 ## 4 machine learning models are implemented:
 1. Naive Bayes  
